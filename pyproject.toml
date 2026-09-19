@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crypto-trader"
+version = "0.1.0"
+description = "Backtest/paper-trading crypto bot (live trading intentionally not wired up yet)"
+requires-python = ">=3.11"
+dependencies = ["ccxt>=4.3,<5"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
