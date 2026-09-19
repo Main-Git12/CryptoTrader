@@ -31,6 +31,11 @@ src/
   api/
     server.ts                   Plain node:http JSON API (no framework dependency) serving the dashboard
     server.test.ts               Real HTTP requests against an ephemeral port, fake Store
+  trading/                      Paper trading only — see trading/README.md for the full picture
+    types.ts, paperExchange.ts, portfolioStore.ts, runTradingCycle.ts
+    priceFeed/                   coingecko.ts + coinbase.ts (real, untested against the live API from
+                                   this sandbox — see trading/README.md), simulated.ts (for tests/demos)
+    strategies/sentimentMomentum.ts   Naive baseline strategy
 ```
 
 ## Checks
@@ -49,6 +54,7 @@ npm run build           # tsc -p tsconfig.build.json (excludes test files)
 cp .env.example .env   # fill in whatever credentials you have — Reddit's are free
 npm run ingest           # runs every collector once; unconfigured/unimplemented ones are skipped, not errors
 npm run serve             # starts the API on :4000 (or $PORT)
+npm run trade              # runs one paper-trading cycle; see src/trading/README.md before assuming this touches real money (it doesn't)
 ```
 
 `npm run ingest` is meant to run on a schedule (cron, a scheduled Lambda,

@@ -1,21 +1,28 @@
-# CryptoTrader — social sentiment monitor
+# CryptoTrader — social sentiment monitor + paper trading
 
-Tracks mentions and sentiment of crypto tickers across social platforms and
-surfaces them on a read-only dashboard. **This is an informational tool,
-not financial advice, and does not place trades or generate buy/sell
-signals.** It scores publicly available text data; it has no opinion on
-what you should do with that information.
+Tracks mentions and sentiment of crypto tickers across social platforms,
+surfaces them on a read-only dashboard, and can paper-trade a strategy
+against them — with real portfolio math and zero real money at risk. **No
+real order has ever been placed by anything in this repo; that would be a
+separate, much bigger, explicit step.** See `server/src/trading/README.md`
+before assuming otherwise.
 
 ## Status
 
-This is an early scaffold. One collector is real and working end-to-end;
-the rest are stubs pending credentials only you can provide — see
-[Platform status](#platform-status) below before assuming everything is live.
+Real and tested: Reddit collection, sentiment scoring, the dashboard, and
+the paper-trading engine (portfolio math, order simulation, a baseline
+strategy). Real code, not-yet-verified-live: the Coinbase and CoinGecko
+price feeds — correct and tested against mocked responses, but this
+sandbox's network policy blocks every external market-data API, so
+they've never made a real request. Stubs pending your credentials: X,
+Telegram, Discord collectors. See [Platform status](#platform-status)
+before assuming everything is live.
 
 ## Repository layout
 
 ```
-/server        Node/TypeScript backend: collectors, sentiment scoring, storage, ingest pipeline, API
+/server        Node/TypeScript backend: collectors, sentiment scoring, storage, ingest pipeline,
+                 API, paper trading (strategy, portfolio, order simulation)
 /dashboard     React/TypeScript frontend: charts for mention volume, sentiment trend, top tickers
 ```
 
@@ -46,11 +53,14 @@ need to change when you're ready to add a platform. See
   reasonable baseline. It's designed to be swapped for a trained/ML-based
   scorer later without touching collectors, storage, or the API; "the
   model keeps improving" is a real upgrade path here, not a marketing claim.
-- **No trading logic.** The system stops at aggregated, timestamped
-  mention/sentiment data. Anything resembling a "buy/sell signal" is a
-  deliberate non-goal right now — see the dashboard's own disclaimer.
+- **Paper trading, never real trading, without a separate explicit
+  decision.** `server/src/trading/` simulates a portfolio against a
+  `PriceFeed` (real: CoinGecko, Coinbase; simulated: for tests/demos) —
+  see `server/src/trading/README.md` for exactly what it would take to
+  ever place a real order, and why that's not a small step.
 
 ## Getting started
 
 - [`server/README.md`](server/README.md)
+- [`server/src/trading/README.md`](server/src/trading/README.md)
 - [`dashboard/README.md`](dashboard/README.md)

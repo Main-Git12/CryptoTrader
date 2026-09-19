@@ -10,13 +10,16 @@
     "lint": "eslint src",
     "test": "TICKER_DATA_DIR=/tmp/cryptotrader-test node --import tsx --test $(find src -name '*.test.ts')",
     "ingest": "tsx src/ingest.ts",
-    "serve": "tsx src/api/server.ts"
+    "serve": "tsx src/api/server.ts",
+    "trade": "tsx src/trading/runTradingCycle.ts"
   },
   "dependencies": {
+    "jsonwebtoken": "^9.0.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.9.0",
+    "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^22.5.4",
     "eslint": "^9.9.0",
     "tsx": "^4.19.0",
