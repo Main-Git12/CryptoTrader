@@ -1,0 +1,26 @@
+{
+  "name": "cryptotrader-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Social sentiment collectors, scoring, storage, and API for CryptoTrader",
+  "type": "commonjs",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src",
+    "test": "TICKER_DATA_DIR=/tmp/cryptotrader-test node --import tsx --test $(find src -name '*.test.ts')",
+    "ingest": "tsx src/ingest.ts",
+    "serve": "tsx src/api/server.ts"
+  },
+  "dependencies": {
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@types/node": "^22.5.4",
+    "eslint": "^9.9.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.4.0"
+  }
+}
