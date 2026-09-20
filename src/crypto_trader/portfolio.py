@@ -1,6 +1,12 @@
+import math
 from dataclasses import dataclass, field
 
 TAKER_FEE_RATE = 0.001  # 0.1%, a typical spot-market taker fee; override per exchange later
+
+
+def _require_positive_finite(name: str, value: float) -> None:
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number, got {value}")
 
 
 class InsufficientFunds(Exception):
@@ -28,6 +34,8 @@ class Portfolio:
     fills: list[Fill] = field(default_factory=list)
 
     def buy(self, price: float, quantity: float) -> Fill:
+        _require_positive_finite("price", price)
+        _require_positive_finite("quantity", quantity)
         cost = price * quantity
         fee = cost * TAKER_FEE_RATE
         total = cost + fee
@@ -40,6 +48,8 @@ class Portfolio:
         return fill
 
     def sell(self, price: float, quantity: float) -> Fill:
+        _require_positive_finite("price", price)
+        _require_positive_finite("quantity", quantity)
         if quantity > self.position_qty:
             raise InsufficientPosition(f"need {quantity}, have {self.position_qty}")
         proceeds = price * quantity

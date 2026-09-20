@@ -31,6 +31,8 @@ class SmaCrossoverStrategy(Strategy):
     SMA crosses above the slow SMA, sell on the opposite cross, otherwise hold."""
 
     def __init__(self, fast_window: int = 10, slow_window: int = 30):
+        if fast_window <= 0 or slow_window <= 0:
+            raise ValueError("fast_window and slow_window must be positive")
         if fast_window >= slow_window:
             raise ValueError("fast_window must be smaller than slow_window")
         self.fast_window = fast_window

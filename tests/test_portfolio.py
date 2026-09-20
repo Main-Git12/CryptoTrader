@@ -36,3 +36,37 @@ def test_sell_rejects_when_position_is_insufficient():
 def test_equity_is_cash_plus_position_at_mark_price():
     portfolio = Portfolio(cash_usd=500.0, position_qty=2.0)
     assert portfolio.equity(mark_price=100.0) == pytest.approx(700.0)
+
+
+@pytest.mark.parametrize("price,quantity", [(-1.0, 5.0), (0.0, 5.0), (float("nan"), 5.0), (float("inf"), 5.0)])
+def test_buy_rejects_nonpositive_or_nonfinite_price(price, quantity):
+    portfolio = Portfolio(cash_usd=1_000_000.0)
+    with pytest.raises(ValueError):
+        portfolio.buy(price=price, quantity=quantity)
+    assert portfolio.cash_usd == 1_000_000.0  # never mutated on a rejected call
+    assert portfolio.position_qty == 0.0
+
+
+@pytest.mark.parametrize("price,quantity", [(100.0, -1.0), (100.0, 0.0), (100.0, float("nan"))])
+def test_buy_rejects_nonpositive_or_nonfinite_quantity(price, quantity):
+    portfolio = Portfolio(cash_usd=1_000_000.0)
+    with pytest.raises(ValueError):
+        portfolio.buy(price=price, quantity=quantity)
+    assert portfolio.cash_usd == 1_000_000.0
+    assert portfolio.position_qty == 0.0
+
+
+def test_sell_rejects_negative_quantity_instead_of_increasing_position():
+    portfolio = Portfolio(cash_usd=0.0, position_qty=5.0)
+    with pytest.raises(ValueError):
+        portfolio.sell(price=100.0, quantity=-1.0)
+    assert portfolio.position_qty == 5.0  # never mutated on a rejected call
+    assert portfolio.cash_usd == 0.0
+
+
+def test_sell_rejects_negative_price():
+    portfolio = Portfolio(cash_usd=0.0, position_qty=5.0)
+    with pytest.raises(ValueError):
+        portfolio.sell(price=-1.0, quantity=1.0)
+    assert portfolio.position_qty == 5.0
+    assert portfolio.cash_usd == 0.0

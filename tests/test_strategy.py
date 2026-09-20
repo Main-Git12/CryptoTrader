@@ -8,6 +8,17 @@ def test_rejects_fast_window_not_smaller_than_slow():
         SmaCrossoverStrategy(fast_window=30, slow_window=10)
 
 
+def test_rejects_zero_or_negative_windows():
+    import pytest
+
+    with pytest.raises(ValueError):
+        SmaCrossoverStrategy(fast_window=0, slow_window=30)
+    with pytest.raises(ValueError):
+        SmaCrossoverStrategy(fast_window=-5, slow_window=30)
+    with pytest.raises(ValueError):
+        SmaCrossoverStrategy(fast_window=5, slow_window=0)
+
+
 def test_holds_until_enough_history_for_both_windows():
     strategy = SmaCrossoverStrategy(fast_window=3, slow_window=5)
     for i in range(1, 5):

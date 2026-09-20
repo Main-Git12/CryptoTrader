@@ -41,7 +41,12 @@ def main() -> None:
     pnl = final_equity - config.starting_balance_usd
     pnl_pct = (pnl / config.starting_balance_usd) * 100
 
-    print(f"{config.symbol} on {config.exchange_id}, {len(close_prices)} candles ({config.timeframe}, ~{args.days}d)")
+    if len(candles) >= 2:
+        actual_days = (candles[-1][0] - candles[0][0]) / 86_400_000
+        span_desc = f"{actual_days:.1f}d actual"
+    else:
+        span_desc = "insufficient data for a span"
+    print(f"{config.symbol} on {config.exchange_id}, {len(close_prices)} candles ({config.timeframe}, {span_desc}, {args.days}d requested)")
     print(f"Trades: {result.trade_count}")
     print(f"Starting balance: ${config.starting_balance_usd:,.2f}")
     print(f"Final equity:     ${final_equity:,.2f}")
