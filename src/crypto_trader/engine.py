@@ -74,6 +74,8 @@ def run_backtest(
 @dataclass
 class PaperTradingResult:
     portfolio: Portfolio
+    close_prices: list[float] = field(default_factory=list)
+    since_ms: int | None = None
     last_price: float | None = None
     trade_count: int = 0
 
@@ -89,6 +91,8 @@ def run_paper_trading(
     fetch: Callable[..., list[list[float]]] = fetch_ohlcv,
     sleep: Callable[[float], None] = time.sleep,
     on_fill: Callable[[Fill, float], None] | None = None,
+    resume_close_prices: list[float] | None = None,
+    resume_since_ms: int | None = None,
 ) -> PaperTradingResult:
     """Paper-trades `strategy` against live market data: each poll fetches
     newly-closed candles and feeds them through the same buy/sell logic as
@@ -103,12 +107,27 @@ def run_paper_trading(
     first poll asks for only `lookback_candles` recent candles rather than
     the exchange's full history; every poll after that asks for whatever
     closed since the last candle it saw.
+
+    `resume_close_prices` and `resume_since_ms` pick up a previous run
+    (see `state.py`): `portfolio` should already reflect whatever trades
+    that run made, and `resume_close_prices` is replayed through
+    `strategy.next_signal` here — without executing any trades — purely to
+    rebuild its internal indicator state (e.g. `SmaCrossoverStrategy`'s
+    running averages) before live polling resumes from `resume_since_ms`.
     """
     strategy.reset()
-    close_prices: list[float] = []
-    since_ms: int | None = None
+    close_prices = list(resume_close_prices) if resume_close_prices else []
+    since_ms = resume_since_ms
+    for i in range(len(close_prices)):
+        strategy.next_signal(close_prices[: i + 1])
+
     wait_seconds = poll_seconds if poll_seconds is not None else _timeframe_seconds(config.timeframe)
-    result = PaperTradingResult(portfolio=portfolio)
+    result = PaperTradingResult(
+        portfolio=portfolio,
+        close_prices=close_prices,
+        since_ms=since_ms,
+        last_price=close_prices[-1] if close_prices else None,
+    )
 
     completed = 0
     while iterations is None or completed < iterations:
@@ -118,6 +137,7 @@ def run_paper_trading(
             timestamp, _open, _high, _low, close, _volume = candle
             since_ms = int(timestamp) + 1
             close_prices.append(close)
+            result.since_ms = since_ms
             result.last_price = close
 
             signal = strategy.next_signal(close_prices)

@@ -22,6 +22,7 @@ src/crypto_trader/
   strategy.py     Strategy interface + an example SMA-crossover strategy
   engine.py       Backtest + live paper-trading loops: run a strategy against a portfolio, one candle at a time
   paper_trade.py  CLI: paper-trade against live market data with a simulated wallet
+  state.py        Save/resume a paper-trading run's wallet, price history, and polling cursor
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -51,6 +52,12 @@ default) and simulates a fill whenever the strategy signals, printing each
 trade as it happens. Like `backtest`, it never reads `LIVE_TRADING` or
 touches `place_order` — it's a simulated wallet regardless of `Config`. Runs
 until interrupted (Ctrl-C), or pass `--iterations N` to stop after N polls.
+
+Pass `--state-file PATH` to persist the wallet, recent price history, and
+polling cursor after each run and resume from them on the next one — without
+it, every run starts over from `--starting-balance-usd` and re-fetches from
+scratch, which isn't useful for anything meant to keep running across
+restarts (a crash, a redeploy, a manual stop and start).
 
 CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
 and pull request against `main`, on Python 3.11 and 3.12.

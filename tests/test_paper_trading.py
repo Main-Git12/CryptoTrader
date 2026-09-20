@@ -182,6 +182,99 @@ def test_paper_trading_never_places_a_real_order(uptrend_then_downtrend):
     assert all(fill.side in ("buy", "sell") for fill in portfolio.fills)
 
 
+def test_paper_trading_resume_replay_rebuilds_indicators_without_reexecuting_trades(uptrend_then_downtrend):
+    # Replaying resume_close_prices must rebuild the strategy's internal
+    # averages so it can react correctly to new candles, without re-firing
+    # trades against the portfolio for candles a prior run already acted on.
+    portfolio = Portfolio(cash_usd=10000.0)
+
+    def fetch_nothing_new(config: Config, since_ms: int | None = None, limit: int | None = None) -> list[list[float]]:
+        return []
+
+    result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        portfolio,
+        iterations=1,
+        fetch=fetch_nothing_new,
+        sleep=lambda _seconds: None,
+        resume_close_prices=uptrend_then_downtrend,
+        resume_since_ms=999,
+    )
+
+    assert result.trade_count == 0
+    assert portfolio.fills == []
+    assert portfolio.cash_usd == 10000.0
+    assert result.last_price == uptrend_then_downtrend[-1]
+
+
+def test_paper_trading_resume_skips_the_initial_lookback_fetch():
+    calls: list[dict[str, int | None]] = []
+
+    def fetch(config: Config, since_ms: int | None = None, limit: int | None = None) -> list[list[float]]:
+        calls.append({"since_ms": since_ms, "limit": limit})
+        return []
+
+    run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=1, slow_window=2),
+        Portfolio(cash_usd=10000.0),
+        iterations=1,
+        fetch=fetch,
+        sleep=lambda _seconds: None,
+        resume_close_prices=[100.0, 101.0, 102.0],
+        resume_since_ms=999,
+    )
+
+    assert calls == [{"since_ms": 999, "limit": None}]
+
+
+def test_paper_trading_resume_continues_as_if_it_never_stopped(uptrend_then_downtrend):
+    split = 30
+    first_half, second_half = uptrend_then_downtrend[:split], uptrend_then_downtrend[split:]
+
+    continuous_portfolio = Portfolio(cash_usd=10000.0)
+    continuous_feed = FakeFeed(_candles_from_closes(uptrend_then_downtrend))
+    continuous_result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        continuous_portfolio,
+        iterations=len(uptrend_then_downtrend),
+        lookback_candles=1,
+        fetch=continuous_feed.fetch,
+        sleep=FakeClock().sleep,
+    )
+
+    # Same portfolio object carries across the "restart" (as state.py would
+    # reload it), but a brand-new Strategy instance stands in for the one
+    # that only existed in the previous process's memory.
+    resumed_portfolio = Portfolio(cash_usd=10000.0)
+    first_run = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        resumed_portfolio,
+        iterations=len(first_half),
+        lookback_candles=1,
+        fetch=FakeFeed(_candles_from_closes(first_half)).fetch,
+        sleep=FakeClock().sleep,
+    )
+    second_run = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),  # fresh instance, no memory of first_run
+        resumed_portfolio,
+        iterations=len(second_half),
+        lookback_candles=1,
+        fetch=FakeFeed(_candles_from_closes(second_half)).fetch,
+        sleep=FakeClock().sleep,
+        resume_close_prices=first_run.close_prices,
+        resume_since_ms=first_run.since_ms,
+    )
+
+    assert first_run.trade_count + second_run.trade_count == continuous_result.trade_count
+    assert resumed_portfolio.position_qty == continuous_result.portfolio.position_qty
+    assert resumed_portfolio.cash_usd == pytest.approx(continuous_result.portfolio.cash_usd)
+
+
 def test_paper_trading_requires_explicit_poll_seconds_for_unparseable_timeframe():
     feed = FakeFeed(_candles_from_closes([100.0]))
     with pytest.raises(ValueError):
