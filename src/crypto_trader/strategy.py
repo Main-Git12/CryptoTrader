@@ -60,3 +60,46 @@ class SmaCrossoverStrategy(Strategy):
         self._prev_fast = fast
         self._prev_slow = slow
         return signal
+
+
+def _rsi(prices: list[float], period: int) -> float | None:
+    if len(prices) < period + 1:
+        return None
+    window = prices[-(period + 1) :]
+    gains = 0.0
+    losses = 0.0
+    for previous, current in zip(window, window[1:], strict=False):
+        change = current - previous
+        gains += max(change, 0.0)
+        losses += max(-change, 0.0)
+    avg_gain = gains / period
+    avg_loss = losses / period
+    if avg_loss == 0:
+        return 100.0
+    return 100 - (100 / (1 + avg_gain / avg_loss))
+
+
+class RsiReversionStrategy(Strategy):
+    """Classic RSI mean-reversion: buy when RSI drops below `oversold`
+    (the asset looks over-sold), sell when it rises above `overbought`,
+    otherwise hold. Stateless — unlike the SMA crossover, RSI itself is
+    recomputed from scratch each call, so `reset()` has nothing to clear."""
+
+    def __init__(self, period: int = 14, oversold: float = 30.0, overbought: float = 70.0):
+        if period <= 0:
+            raise ValueError("period must be positive")
+        if not (0 < oversold < overbought < 100):
+            raise ValueError("must have 0 < oversold < overbought < 100")
+        self.period = period
+        self.oversold = oversold
+        self.overbought = overbought
+
+    def next_signal(self, close_prices: list[float]) -> Signal:
+        rsi = _rsi(close_prices, self.period)
+        if rsi is None:
+            return Signal.HOLD
+        if rsi < self.oversold:
+            return Signal.BUY
+        if rsi > self.overbought:
+            return Signal.SELL
+        return Signal.HOLD

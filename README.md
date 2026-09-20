@@ -19,10 +19,12 @@ src/crypto_trader/
   config.py       Env-driven config; refuses to start in live mode without real API credentials
   exchange.py     Thin ccxt wrapper — public market data always, order placement gated on live mode
   portfolio.py    Simulated wallet: cash + position, fills with fees, equity tracking
-  strategy.py     Strategy interface + an example SMA-crossover strategy
+  strategy.py     Strategy interface + SMA-crossover and RSI-reversion strategies
   engine.py       Backtest + live paper-trading loops: run a strategy against a portfolio, one candle at a time
   paper_trade.py  CLI: paper-trade against live market data with a simulated wallet
   state.py        Save/resume a paper-trading run's wallet, price history, and polling cursor
+  metrics.py      Performance metrics for a backtest: return, max drawdown, win rate, Sharpe ratio
+  optimize.py     CLI: grid-search strategy parameters against real historical data, ranked by performance
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -39,6 +41,8 @@ pytest                  # unit tests (synthetic data, no network needed)
 python -m crypto_trader.backtest --exchange kraken --symbol BTC/USD --timeframe 1h --days 30
 
 python -m crypto_trader.paper_trade --exchange kraken --symbol BTC/USD --timeframe 1h
+
+python -m crypto_trader.optimize --exchange kraken --symbol BTC/USD --timeframe 1h --days 90
 ```
 
 `pip install -e .` installs this `src`-layout package (and its `ccxt` dependency, per
@@ -58,6 +62,14 @@ polling cursor after each run and resume from them on the next one — without
 it, every run starts over from `--starting-balance-usd` and re-fetches from
 scratch, which isn't useful for anything meant to keep running across
 restarts (a crash, a redeploy, a manual stop and start).
+
+`optimize` backtests a grid of SMA-crossover and RSI-reversion parameter
+combinations against the same historical data and ranks them by total
+return, printing each one's max drawdown, win rate, Sharpe ratio (per-candle,
+not annualized), and trade count alongside it — a way to compare strategies
+and parameters against real market history before deciding what, if
+anything, is worth paper-trading live. Like everything else here, it only
+ever runs backtests against a simulated wallet.
 
 CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
 and pull request against `main`, on Python 3.11 and 3.12.
