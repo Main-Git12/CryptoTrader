@@ -12,7 +12,7 @@ def _ccxt_exchange(config: Config) -> Any:
     import ccxt  # imported lazily so tests/backtests never need it installed as a hard dep of import time
 
     exchange_class = getattr(ccxt, config.exchange_id)
-    kwargs: dict[str, str] = {}
+    kwargs: dict[str, str | None] = {}
     if config.live_trading:
         kwargs["apiKey"] = config.api_key
         kwargs["secret"] = config.api_secret

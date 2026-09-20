@@ -4,15 +4,15 @@ from crypto_trader.config import Config, LiveTradingMisconfigured
 
 
 def _base_kwargs(**overrides):
-    kwargs = dict(
-        exchange_id="binance",
-        symbol="BTC/USDT",
-        timeframe="1h",
-        starting_balance_usd=10000.0,
-        live_trading=False,
-        api_key=None,
-        api_secret=None,
-    )
+    kwargs = {
+        "exchange_id": "binance",
+        "symbol": "BTC/USDT",
+        "timeframe": "1h",
+        "starting_balance_usd": 10000.0,
+        "live_trading": False,
+        "api_key": None,
+        "api_secret": None,
+    }
     kwargs.update(overrides)
     return kwargs
 

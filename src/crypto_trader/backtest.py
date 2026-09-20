@@ -9,7 +9,12 @@ from .strategy import SmaCrossoverStrategy
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest the SMA-crossover strategy against real historical OHLCV data (no exchange account needed).")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Backtest the SMA-crossover strategy against real historical "
+            "OHLCV data (no exchange account needed)."
+        )
+    )
     parser.add_argument("--exchange", default="kraken")
     parser.add_argument("--symbol", default="BTC/USD")
     parser.add_argument("--timeframe", default="1h")
