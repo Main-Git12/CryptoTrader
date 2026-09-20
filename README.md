@@ -20,7 +20,8 @@ src/crypto_trader/
   exchange.py     Thin ccxt wrapper — public market data always, order placement gated on live mode
   portfolio.py    Simulated wallet: cash + position, fills with fees, equity tracking
   strategy.py     Strategy interface + an example SMA-crossover strategy
-  engine.py       Backtest engine: replays OHLCV candles through a strategy and a portfolio
+  engine.py       Backtest + live paper-trading loops: run a strategy against a portfolio, one candle at a time
+  paper_trade.py  CLI: paper-trade against live market data with a simulated wallet
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -35,11 +36,21 @@ mypy                    # type check
 pytest                  # unit tests (synthetic data, no network needed)
 
 python -m crypto_trader.backtest --exchange kraken --symbol BTC/USD --timeframe 1h --days 30
+
+python -m crypto_trader.paper_trade --exchange kraken --symbol BTC/USD --timeframe 1h
 ```
 
 `pip install -e .` installs this `src`-layout package (and its `ccxt` dependency, per
 `pyproject.toml`) in editable mode — without it, `crypto_trader` isn't importable and
-both `pytest` and the command above fail with `ModuleNotFoundError`.
+both `pytest` and the commands above fail with `ModuleNotFoundError`.
+
+`backtest` replays historical candles all at once and reports a final P&L.
+`paper_trade` runs the same strategy/portfolio machinery against live market
+data instead: it polls for newly-closed candles (once per timeframe by
+default) and simulates a fill whenever the strategy signals, printing each
+trade as it happens. Like `backtest`, it never reads `LIVE_TRADING` or
+touches `place_order` — it's a simulated wallet regardless of `Config`. Runs
+until interrupted (Ctrl-C), or pass `--iterations N` to stop after N polls.
 
 CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
 and pull request against `main`, on Python 3.11 and 3.12.
