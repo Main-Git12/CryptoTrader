@@ -9,7 +9,12 @@ from .strategy import SmaCrossoverStrategy
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Backtest the SMA-crossover strategy against real historical OHLCV data (no exchange account needed).")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Backtest the SMA-crossover strategy against real historical "
+            "OHLCV data (no exchange account needed)."
+        )
+    )
     parser.add_argument("--exchange", default="kraken")
     parser.add_argument("--symbol", default="BTC/USD")
     parser.add_argument("--timeframe", default="1h")
@@ -46,7 +51,11 @@ def main() -> None:
         span_desc = f"{actual_days:.1f}d actual"
     else:
         span_desc = "insufficient data for a span"
-    print(f"{config.symbol} on {config.exchange_id}, {len(close_prices)} candles ({config.timeframe}, {span_desc}, {args.days}d requested)")
+    summary = (
+        f"{config.symbol} on {config.exchange_id}, {len(close_prices)} candles "
+        f"({config.timeframe}, {span_desc}, {args.days}d requested)"
+    )
+    print(summary)
     print(f"Trades: {result.trade_count}")
     print(f"Starting balance: ${config.starting_balance_usd:,.2f}")
     print(f"Final equity:     ${final_equity:,.2f}")

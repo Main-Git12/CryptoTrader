@@ -29,7 +29,10 @@ tests/            pytest unit tests for portfolio math, strategy signals, config
 ```bash
 pip install -e .
 pip install -r requirements-dev.txt
-pytest
+
+ruff check src tests   # lint
+mypy                    # type check
+pytest                  # unit tests (synthetic data, no network needed)
 
 python -m crypto_trader.backtest --exchange kraken --symbol BTC/USD --timeframe 1h --days 30
 ```
@@ -37,6 +40,9 @@ python -m crypto_trader.backtest --exchange kraken --symbol BTC/USD --timeframe 
 `pip install -e .` installs this `src`-layout package (and its `ccxt` dependency, per
 `pyproject.toml`) in editable mode — without it, `crypto_trader` isn't importable and
 both `pytest` and the command above fail with `ModuleNotFoundError`.
+
+CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
+and pull request against `main`, on Python 3.11 and 3.12.
 
 Default exchange is `kraken`, not `binance`: Binance's public API returns
 HTTP 451 ("restricted location") for most cloud/datacenter egress IPs,
