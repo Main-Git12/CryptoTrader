@@ -26,6 +26,7 @@ src/crypto_trader/
   metrics.py      Performance metrics for a backtest: return, max drawdown, win rate, Sharpe ratio
   optimize.py     CLI: grid-search strategy parameters against real historical data, ranked by performance
   leaderboard.py  Accumulate optimizer results across runs so each run can refine around the best found so far
+  walkforward.py  CLI: pick the best config on one slice of history, score it on the next slice it never saw
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -44,6 +45,8 @@ python -m crypto_trader.backtest --exchange kraken --symbol BTC/USD --timeframe 
 python -m crypto_trader.paper_trade --exchange kraken --symbol BTC/USD --timeframe 1h
 
 python -m crypto_trader.optimize --exchange kraken --symbol BTC/USD --timeframe 1h --days 90
+
+python -m crypto_trader.walkforward --symbol BTC/USD --timeframe 1h --train-candles 300 --test-candles 100
 ```
 
 `pip install -e .` installs this `src`-layout package (and its `ccxt` dependency, per
@@ -85,8 +88,40 @@ scored well on one slice of past data is a good way to find parameters that
 money next month. The more configurations you try, the more likely the
 winner is just the luckiest fit to that history rather than a real edge. Use
 the leaderboard to narrow down what's worth testing forward on unseen data
-(that's what `paper_trade` is for), not as a list of settings that are
-"proven" to profit.
+(that's what `walkforward` and `paper_trade` are for), not as a list of
+settings that are "proven" to profit.
+
+## Walk-forward validation: does any of it hold up?
+
+`optimize` tells you what fit the past best. `walkforward` tells you whether
+that means anything. It repeatedly picks the best configuration on one slice
+of history (the *train* range), then scores that single configuration on the
+slice immediately after it (the *test* range), which it never saw — rolling
+forward through the data. It reports both numbers per fold, plus buy & hold
+over the same test range as a benchmark.
+
+The gap between the train and test columns is what searching cost you. Here
+is a real run on BTC/USD 1h data, 300 train / 100 test candles, 4 folds:
+
+```
+Mean in-sample (train):       4.02%
+Mean out-of-sample (test):    0.38%
+Mean buy & hold:              1.73%
+Profitable out-of-sample:  1/4 folds
+```
+
+Read that honestly: configurations that averaged +4% on the data they were
+chosen from returned +0.38% on data they hadn't seen, underperformed simply
+holding the asset, and lost money in 3 of 4 periods. That is the normal
+result for this kind of search, and it is the reason the live-trading gate
+in this repo stays shut. A strategy earns real money only after it survives
+this test *and* forward paper trading — not because it topped a leaderboard.
+
+**Note on available history:** exchanges cap how many candles they'll return
+regardless of `--days`. Kraken returns about 720 per timeframe (so 4h covers
+~120 days, 1d covers ~1 year); Coinbase returns 300. Walk-forward needs
+`train + test` candles for even one fold, so for longer calendar coverage,
+use a longer `--timeframe` rather than a bigger `--days`.
 
 CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
 and pull request against `main`, on Python 3.11 and 3.12.
