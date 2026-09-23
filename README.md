@@ -25,6 +25,7 @@ src/crypto_trader/
   state.py        Save/resume a paper-trading run's wallet, price history, and polling cursor
   metrics.py      Performance metrics for a backtest: return, max drawdown, win rate, Sharpe ratio
   optimize.py     CLI: grid-search strategy parameters against real historical data, ranked by performance
+  leaderboard.py  Accumulate optimizer results across runs so each run can refine around the best found so far
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -70,6 +71,22 @@ not annualized), and trade count alongside it — a way to compare strategies
 and parameters against real market history before deciding what, if
 anything, is worth paper-trading live. Like everything else here, it only
 ever runs backtests against a simulated wallet.
+
+Pass `--leaderboard-file PATH` to accumulate results across runs. Each run
+then also searches *around* the best configurations previous runs found for
+that same symbol and timeframe — stepping their parameters up and down — so
+repeated runs hill-climb toward better parameters instead of re-testing one
+fixed grid forever, and can land on values the original grid never
+contained.
+
+**A caveat worth taking seriously:** searching harder for parameters that
+scored well on one slice of past data is a good way to find parameters that
+*fit that slice*, which is not the same as finding parameters that will make
+money next month. The more configurations you try, the more likely the
+winner is just the luckiest fit to that history rather than a real edge. Use
+the leaderboard to narrow down what's worth testing forward on unseen data
+(that's what `paper_trade` is for), not as a list of settings that are
+"proven" to profit.
 
 CI (`.github/workflows/ci.yml`) runs lint, type check, and tests on every push
 and pull request against `main`, on Python 3.11 and 3.12.
