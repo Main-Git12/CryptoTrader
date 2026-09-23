@@ -3,6 +3,7 @@ import argparse
 from .config import Config
 from .engine import run_paper_trading
 from .portfolio import Fill, Portfolio
+from .state import load_paper_trading_state, save_paper_trading_state
 from .strategy import SmaCrossoverStrategy
 
 
@@ -32,6 +33,15 @@ def main() -> None:
         default=None,
         help="Stop after this many polls instead of running until interrupted (Ctrl-C).",
     )
+    parser.add_argument(
+        "--state-file",
+        default=None,
+        help=(
+            "Persist the wallet, recent price history, and polling cursor here after each run, and "
+            "resume from it on the next one instead of starting fresh. Without this, every run starts "
+            "over from --starting-balance-usd and re-fetches from scratch."
+        ),
+    )
     args = parser.parse_args()
 
     config = Config(
@@ -44,13 +54,37 @@ def main() -> None:
         api_secret=None,
     )
     strategy = SmaCrossoverStrategy(fast_window=args.fast_window, slow_window=args.slow_window)
-    portfolio = Portfolio(cash_usd=config.starting_balance_usd)
+
+    resume_close_prices = None
+    resume_since_ms = None
+    loaded = load_paper_trading_state(args.state_file) if args.state_file else None
+    if loaded is not None:
+        portfolio = loaded.portfolio
+        resume_close_prices = loaded.close_prices
+        resume_since_ms = loaded.since_ms
+        print(f"Resumed from {args.state_file}: cash=${portfolio.cash_usd:,.2f} position={portfolio.position_qty}")
+    else:
+        portfolio = Portfolio(cash_usd=config.starting_balance_usd)
 
     print(f"Paper trading {config.symbol} on {config.exchange_id} ({config.timeframe} candles) — Ctrl-C to stop")
     try:
-        result = run_paper_trading(config, strategy, portfolio, iterations=args.iterations, on_fill=_print_fill)
+        result = run_paper_trading(
+            config,
+            strategy,
+            portfolio,
+            iterations=args.iterations,
+            on_fill=_print_fill,
+            resume_close_prices=resume_close_prices,
+            resume_since_ms=resume_since_ms,
+        )
     except KeyboardInterrupt:
         result = None
+    finally:
+        if args.state_file:
+            saved_prices = result.close_prices if result is not None else (resume_close_prices or [])
+            saved_since_ms = result.since_ms if result is not None else resume_since_ms
+            save_paper_trading_state(args.state_file, portfolio, saved_prices, saved_since_ms)
+            print(f"State saved to {args.state_file}")
 
     print(f"Trades: {len(portfolio.fills)}")
     if result is not None and result.last_price is not None:
