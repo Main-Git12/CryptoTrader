@@ -3,6 +3,7 @@ import pytest
 from crypto_trader.config import Config
 from crypto_trader.engine import run_paper_trading
 from crypto_trader.portfolio import Fill, Portfolio
+from crypto_trader.risk import RiskLimits, RiskManager
 from crypto_trader.strategy import SmaCrossoverStrategy
 
 ONE_HOUR_MS = 3_600_000
@@ -273,6 +274,147 @@ def test_paper_trading_resume_continues_as_if_it_never_stopped(uptrend_then_down
     assert first_run.trade_count + second_run.trade_count == continuous_result.trade_count
     assert resumed_portfolio.position_qty == continuous_result.portfolio.position_qty
     assert resumed_portfolio.cash_usd == pytest.approx(continuous_result.portfolio.cash_usd)
+
+
+def test_paper_trading_survives_a_failed_poll_and_keeps_going(flat_prices):
+    # A process meant to run for weeks can't exit the first time an exchange
+    # times out or rate-limits.
+    feed = FakeFeed(_candles_from_closes(flat_prices))
+    clock = FakeClock()
+    errors: list[Exception] = []
+    calls = {"n": 0}
+
+    def flaky_fetch(config: Config, since_ms: int | None = None, limit: int | None = None) -> list[list[float]]:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise ConnectionError("exchange timed out")
+        return feed.fetch(config, since_ms=since_ms, limit=limit)
+
+    result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        Portfolio(cash_usd=10000.0),
+        iterations=4,
+        lookback_candles=1,
+        fetch=flaky_fetch,
+        sleep=clock.sleep,
+        on_error=errors.append,
+    )
+
+    assert calls["n"] == 4  # kept polling after the failure
+    assert [type(e) for e in errors] == [ConnectionError]
+    assert result.last_price is not None
+
+
+def test_paper_trading_resumes_from_the_same_cursor_after_a_failure(flat_prices):
+    # A failed poll must not advance the cursor: the candles it missed are
+    # still waiting on the next one.
+    seen_since: list[int | None] = []
+
+    def failing_fetch(config: Config, since_ms: int | None = None, limit: int | None = None) -> list[list[float]]:
+        seen_since.append(since_ms)
+        raise TimeoutError("still down")
+
+    run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        Portfolio(cash_usd=10000.0),
+        iterations=3,
+        fetch=failing_fetch,
+        sleep=lambda _seconds: None,
+        resume_since_ms=4242,
+        on_error=lambda _error: None,
+    )
+
+    assert seen_since == [4242, 4242, 4242]
+
+
+def test_paper_trading_without_an_error_handler_still_survives_a_failure():
+    def always_fails(config: Config, since_ms: int | None = None, limit: int | None = None) -> list[list[float]]:
+        raise ConnectionError("down")
+
+    result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        Portfolio(cash_usd=10000.0),
+        iterations=2,
+        fetch=always_fails,
+        sleep=lambda _seconds: None,
+    )
+
+    assert result.trade_count == 0
+
+
+def test_interrupt_returns_the_history_accumulated_so_far(flat_prices):
+    # Stopping must not strand the caller with no result: the price history
+    # and cursor built up during the run are exactly what has to be
+    # persisted, and losing them would silently reset a long-running
+    # deployment to its starting state.
+    feed = FakeFeed(_candles_from_closes(flat_prices))
+    calls = {"n": 0}
+
+    def fetch_then_interrupt(
+        config: Config, since_ms: int | None = None, limit: int | None = None
+    ) -> list[list[float]]:
+        calls["n"] += 1
+        if calls["n"] > 3:
+            raise KeyboardInterrupt
+        return feed.fetch(config, since_ms=since_ms, limit=limit)
+
+    result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        Portfolio(cash_usd=10000.0),
+        iterations=None,  # would otherwise run forever
+        lookback_candles=1,
+        fetch=fetch_then_interrupt,
+        sleep=lambda _seconds: None,
+    )
+
+    assert len(result.close_prices) == 3
+    assert result.since_ms is not None
+    assert result.last_price == flat_prices[2]
+
+
+def test_interrupt_during_the_wait_also_returns_progress(flat_prices):
+    feed = FakeFeed(_candles_from_closes(flat_prices))
+
+    def interrupting_sleep(_seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    result = run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        Portfolio(cash_usd=10000.0),
+        iterations=None,
+        lookback_candles=1,
+        fetch=feed.fetch,
+        sleep=interrupting_sleep,
+    )
+
+    assert len(result.close_prices) == 1  # one poll landed before the wait was cut short
+
+
+def test_paper_trading_honours_a_risk_manager(uptrend_then_downtrend):
+    feed = FakeFeed(_candles_from_closes(uptrend_then_downtrend))
+    portfolio = Portfolio(cash_usd=10000.0)
+    risk = RiskManager(RiskLimits(max_position_fraction=0.25), starting_equity=10000.0)
+
+    run_paper_trading(
+        _config(),
+        SmaCrossoverStrategy(fast_window=5, slow_window=15),
+        portfolio,
+        iterations=len(uptrend_then_downtrend),
+        lookback_candles=1,
+        fetch=feed.fetch,
+        sleep=FakeClock().sleep,
+        risk=risk,
+    )
+
+    buys = [fill for fill in portfolio.fills if fill.side == "buy"]
+    assert buys, "expected the crossover to fire at least one buy"
+    # A quarter-sized buy costs about a quarter of the account.
+    assert buys[0].price * buys[0].quantity == pytest.approx(2500.0, rel=0.01)
 
 
 def test_paper_trading_requires_explicit_poll_seconds_for_unparseable_timeframe():

@@ -133,6 +133,52 @@ coinbase, and bitstamp all work fine from those. If you're running this
 somewhere Binance isn't blocked, `--exchange binance --symbol BTC/USDT`
 works the same way.
 
+## Risk limits
+
+`risk.py` caps what a strategy is allowed to do, independent of what it
+signals. A strategy decides *when* to trade; `RiskLimits` decides *how much*
+and *whether trading is still allowed at all*:
+
+- `max_position_fraction` — the share of equity a single position may use.
+  `1.0` is the all-in sizing backtests default to; `0.25` risks at most a
+  quarter of the account at once.
+- `max_drawdown_pct` — a kill switch, not a stop-loss. Once equity falls
+  that far below its high-water mark, trading stops for good and any open
+  position is flattened. Halting is one-way on purpose: a switch that
+  re-arms itself when equity ticks back up isn't a kill switch, and
+  restarting should be a decision someone makes, not something that happens
+  while nobody is watching.
+
+Both apply to backtests and paper trading through the same code path, so you
+can backtest what a given set of limits would have done to the same signals:
+
+```bash
+python -m crypto_trader.paper_trade --max-position-fraction 0.25 --max-drawdown-pct 20
+```
+
+## Running it continuously
+
+`paper_trade` is built to survive being left alone:
+
+- A failed poll doesn't end the run. Exchanges time out, rate-limit, and have
+  outages; the error is logged to stderr and the next cycle picks up from the
+  same cursor, so missed candles arrive late rather than being lost.
+- `SIGTERM` (what a platform sends on redeploy) unwinds the same way Ctrl-C
+  does, so state is saved instead of dropped.
+- `--state-file` on a persistent volume means a restart resumes the wallet,
+  price history, and cursor instead of starting over.
+
+The `Procfile` runs it as a worker, configured by environment variables
+(`STATE_FILE`, `EXCHANGE_ID`, `SYMBOL`, `TIMEFRAME`, `MAX_POSITION_FRACTION`,
+`MAX_DRAWDOWN_PCT`). Point `STATE_FILE` at a mounted volume — on ephemeral
+disk a redeploy silently resets the run to its starting balance.
+
+**What this is for:** accumulating out-of-sample evidence on data that didn't
+exist when a configuration was chosen. Walk-forward tests against history the
+strategy never saw; this tests against history that hasn't happened yet,
+which is the only test that can't be gamed by searching harder. It is still a
+simulated wallet — no credentials, no real orders.
+
 ## Going live (not yet wired up beyond the config guard)
 
 Real trading needs real infrastructure decisions first — position sizing,
