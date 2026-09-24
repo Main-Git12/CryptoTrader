@@ -62,6 +62,37 @@ class SmaCrossoverStrategy(Strategy):
         return signal
 
 
+class TimeSeriesMomentumStrategy(Strategy):
+    """Long while the trailing return over `lookback` periods is positive,
+    flat otherwise.
+
+    This is the plainest form of time-series momentum, and unlike the
+    indicator crossovers in this file it is the one price-based family with
+    durable cross-market evidence behind it — strongest at roughly 1-4 week
+    horizons, which on daily candles means a lookback around 7-28. It is
+    deliberately boring: no thresholds to tune, one parameter, and it trades
+    rarely enough that costs don't eat the result.
+
+    Stateless — the trailing return is recomputed each call, so `reset()`
+    has nothing to clear.
+    """
+
+    def __init__(self, lookback: int = 28):
+        if lookback <= 0:
+            raise ValueError(f"lookback must be positive, got {lookback}")
+        self.lookback = lookback
+
+    def next_signal(self, close_prices: list[float]) -> Signal:
+        if len(close_prices) < self.lookback + 1:
+            return Signal.HOLD
+
+        earlier = close_prices[-(self.lookback + 1)]
+        latest = close_prices[-1]
+        if earlier <= 0:
+            return Signal.HOLD
+        return Signal.BUY if latest > earlier else Signal.SELL
+
+
 def _rsi(prices: list[float], period: int) -> float | None:
     if len(prices) < period + 1:
         return None

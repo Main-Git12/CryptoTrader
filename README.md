@@ -19,13 +19,15 @@ src/crypto_trader/
   config.py       Env-driven config; refuses to start in live mode without real API credentials
   exchange.py     Thin ccxt wrapper — public market data always, order placement gated on live mode
   portfolio.py    Simulated wallet: cash + position, fills with fees, equity tracking
-  strategy.py     Strategy interface + SMA-crossover and RSI-reversion strategies
+  strategy.py     Strategy interface + SMA-crossover, RSI-reversion and time-series-momentum strategies
   engine.py       Backtest + live paper-trading loops: run a strategy against a portfolio, one candle at a time
   paper_trade.py  CLI: paper-trade against live market data with a simulated wallet
   state.py        Save/resume a paper-trading run's wallet, price history, and polling cursor
   metrics.py      Performance metrics for a backtest: return, max drawdown, win rate, Sharpe ratio
   optimize.py     CLI: grid-search strategy parameters against real historical data, ranked by performance
   leaderboard.py  Accumulate optimizer results across runs so each run can refine around the best found so far
+  deflated.py     Deflated Sharpe ratio — what a search result is worth after correcting for how many configs were tried
+  basket.py       CLI: multi-asset time-series-momentum basket on daily candles, volatility-targeted
   walkforward.py  CLI: pick the best config on one slice of history, score it on the next slice it never saw
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
@@ -82,6 +84,28 @@ repeated runs hill-climb toward better parameters instead of re-testing one
 fixed grid forever, and can land on values the original grid never
 contained.
 
+Every run also reports a **deflated Sharpe ratio** (`deflated.py`, after
+Bailey & López de Prado 2014), which is the honest version of the headline
+number. An ordinary Sharpe asks "is this good?"; the deflated one asks "is
+this good *given how hard we looked*?" — because the winner of a large
+search is partly selected for luck. It computes the highest Sharpe you'd
+expect from that many strategies with **zero** real skill, then reports the
+probability the winner's true Sharpe is above zero. Above ~95% the result
+survives the correction; below it, the search itself plausibly explains the
+result.
+
+On a real 30-day BTC/USD 1h run this is what it says about our own
+optimizer's output:
+
+```
+Best Sharpe 0.069 vs 0.077 expected from 23 no-skill trials
+Deflated Sharpe (P[true Sharpe > 0]): 40.9%
+Does NOT survive the multiple-testing correction.
+```
+
+The top line of that same run showed +12.03% return. The two numbers are
+both true, and the second one is the one that matters.
+
 **A caveat worth taking seriously:** searching harder for parameters that
 scored well on one slice of past data is a good way to find parameters that
 *fit that slice*, which is not the same as finding parameters that will make
@@ -90,6 +114,51 @@ winner is just the luckiest fit to that history rather than a real edge. Use
 the leaderboard to narrow down what's worth testing forward on unseen data
 (that's what `walkforward` and `paper_trade` are for), not as a list of
 settings that are "proven" to profit.
+
+## The momentum basket: daily candles, many assets, volatility-targeted
+
+`basket` is the deliberate opposite of hourly SMA/RSI on one pair, and it
+exists because that shape is well documented to fail. It runs
+`TimeSeriesMomentumStrategy` — long while the trailing N-candle return is
+positive, flat otherwise — independently across several assets on daily
+candles, each with its own equal slice of capital and its own wallet, then
+sums the sleeves into one portfolio.
+
+```bash
+python -m crypto_trader.basket --timeframe 1d --days 730 --lookback 28
+```
+
+Three changes from the old approach, each for a reason:
+
+- **Daily candles.** The single biggest lever. Hourly crossovers trade far
+  too often to clear realistic round-trip costs; daily amortizes them, and
+  1-4 weeks is the horizon where time-series momentum evidence actually
+  exists. `--lookback 28` is ~4 weeks.
+- **Several assets.** The same signal across many markets, so one asset's
+  noise doesn't decide the result. Sleeves are independent wallets — no
+  sleeve can spend another's cash.
+- **Volatility targeting.** `--target-volatility-pct` scales a position down
+  when the asset has been more volatile than the target. It only ever scales
+  *down*, since sizing up would need leverage this wallet doesn't have.
+  Expect steadier drawdowns from it, not higher returns.
+
+A real run, 720 daily candles (~2 years) on Kraken, 28-day lookback:
+
+```
+BASKET          60.52%     33.72% drawdown    319 trades
+buy & hold      49.11%
+```
+
+Excluding the one outlier sleeve (XRP, +200%), the remaining four still beat
+the benchmark — 25.52% against 11.12% — so the result is not one asset
+wearing a trench coat. Annualized, the basket's Sharpe lands around 0.6-1.0,
+which is where the trend-following literature says to expect it.
+
+**All of that is in-sample.** The lookback was taken from published evidence
+rather than fitted to this data, which is a meaningfully better starting
+position than a parameter search — but it is still a backtest over one
+two-year stretch of one market regime. Run `walkforward` before believing
+it.
 
 ## Walk-forward validation: does any of it hold up?
 

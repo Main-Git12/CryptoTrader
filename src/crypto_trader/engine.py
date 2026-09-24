@@ -1,6 +1,6 @@
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .config import Config
@@ -25,6 +25,7 @@ def execute_signal(
     portfolio: Portfolio,
     price: float,
     risk: RiskManager | None = None,
+    recent_prices: Sequence[float] | None = None,
 ) -> Fill | None:
     """Applies a signal to `portfolio` at `price`. Returns the resulting
     Fill, or None if nothing traded (HOLD, already in/out of position, or
@@ -45,7 +46,7 @@ def execute_signal(
         if risk is None:
             quantity = (portfolio.cash_usd / price) * 0.999  # leave room for the taker fee
         else:
-            quantity = risk.buy_quantity(portfolio.cash_usd, portfolio.equity(price), price)
+            quantity = risk.buy_quantity(portfolio.cash_usd, portfolio.equity(price), price, recent_prices)
         if quantity > 0:
             return portfolio.buy(price, quantity)
     elif signal is Signal.SELL and portfolio.position_qty > 0:
@@ -93,7 +94,8 @@ def run_backtest(
             risk.observe(portfolio.equity(price))
 
         signal = strategy.next_signal(history)
-        if execute_signal(signal, portfolio, price, risk) is not None:
+        recent = history[-(risk.limits.volatility_lookback + 1) :] if risk is not None else None
+        if execute_signal(signal, portfolio, price, risk, recent) is not None:
             trade_count += 1
 
         equity_curve.append(portfolio.equity(price))
@@ -196,7 +198,8 @@ def run_paper_trading(
                 risk.observe(portfolio.equity(close))
 
             signal = strategy.next_signal(close_prices)
-            fill = execute_signal(signal, portfolio, close, risk)
+            recent = close_prices[-(risk.limits.volatility_lookback + 1) :] if risk is not None else None
+            fill = execute_signal(signal, portfolio, close, risk, recent)
             if fill is not None:
                 result.trade_count += 1
                 if on_fill is not None:
