@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from .config import Config
+from .deflated import DeflatedSharpe, deflated_sharpe_ratio
 from .engine import run_backtest
 from .exchange import fetch_ohlcv
 from .leaderboard import LeaderboardEntry, load_leaderboard, merge_leaderboard, save_leaderboard
@@ -186,6 +187,48 @@ def refine_from_leaderboard(
     return refined
 
 
+def deflate_best(results: Sequence[CandidateResult]) -> DeflatedSharpe | None:
+    """Scores the best-by-Sharpe candidate against the whole set it was
+    picked from. Returns None when the search is too small or too degenerate
+    to say anything — which is itself worth reporting, rather than passing
+    off silence as a pass."""
+    scored = [r for r in results if r.metrics.sharpe_ratio is not None]
+    if len(scored) < 2:
+        return None
+
+    best = max(scored, key=lambda r: r.metrics.sharpe_ratio or 0.0)
+    return deflated_sharpe_ratio(
+        observed_sharpe=best.metrics.sharpe_ratio or 0.0,
+        trial_sharpes=[r.metrics.sharpe_ratio or 0.0 for r in scored],
+        return_count=best.metrics.return_count,
+        skewness=best.metrics.skewness,
+        kurtosis=best.metrics.kurtosis,
+    )
+
+
+def _print_deflated_verdict(results: Sequence[CandidateResult]) -> None:
+    """The headline number is the best of many tries, so on its own it
+    overstates what was found. This says what it's worth after accounting
+    for the size of the search."""
+    deflated = deflate_best(results)
+    if deflated is None:
+        print("\nDeflated Sharpe: not computable (too few scorable candidates or too short a history).")
+        return
+
+    print(
+        f"\nBest Sharpe {deflated.observed_sharpe:.3f} vs {deflated.benchmark_sharpe:.3f} expected "
+        f"from {deflated.trials} no-skill trials"
+    )
+    print(f"Deflated Sharpe (P[true Sharpe > 0]): {deflated.probability:.1%}")
+    if deflated.probability >= 0.95:
+        print("Survives the multiple-testing correction — worth testing out-of-sample.")
+    else:
+        print(
+            "Does NOT survive the multiple-testing correction: searching this many "
+            "configurations would be expected to turn up a result this good by luck alone."
+        )
+
+
 def _print_table(rows: Sequence[tuple[str, PerformanceMetrics]]) -> None:
     print(f"{'strategy':<40} {'return%':>9} {'drawdown%':>10} {'win_rate':>9} {'sharpe':>8} {'trades':>7}")
     for name, m in rows:
@@ -246,6 +289,7 @@ def main() -> None:
         print(f"Refining around {len(previous)} previously-recorded results ({len(refined)} nearby variations tried)")
     print(f"Evaluated {len(candidates)} strategy configurations — top {min(args.top, len(ranked))} by return:\n")
     _print_table([(r.name, r.metrics) for r in ranked[: args.top]])
+    _print_deflated_verdict(ranked)
 
     if args.leaderboard_file:
         new_entries = [
