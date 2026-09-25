@@ -1,0 +1,1 @@
+worker: python -m crypto_trader.paper_trade --state-file ${STATE_FILE:-/data/paper_state.json} --exchange ${EXCHANGE_ID:-kraken} --symbol ${SYMBOL:-BTC/USD} --timeframe ${TIMEFRAME:-1h} --max-position-fraction ${MAX_POSITION_FRACTION:-0.25} --max-drawdown-pct ${MAX_DRAWDOWN_PCT:-20}
