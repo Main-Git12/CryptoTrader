@@ -29,6 +29,7 @@ src/crypto_trader/
   deflated.py     Deflated Sharpe ratio — what a search result is worth after correcting for how many configs were tried
   basket.py       CLI: multi-asset time-series-momentum basket on daily candles, volatility-targeted
   walkforward.py  CLI: pick the best config on one slice of history, score it on the next slice it never saw
+                  (--basket does the same for the multi-asset momentum basket)
 tests/            pytest unit tests for portfolio math, strategy signals, config safety, and a full backtest run
 ```
 
@@ -157,8 +158,8 @@ which is where the trend-following literature says to expect it.
 **All of that is in-sample.** The lookback was taken from published evidence
 rather than fitted to this data, which is a meaningfully better starting
 position than a parameter search — but it is still a backtest over one
-two-year stretch of one market regime. Run `walkforward` before believing
-it.
+two-year stretch of one market regime. The section below is what happened
+when it was scored out-of-sample, and the headline number did not survive.
 
 ## Walk-forward validation: does any of it hold up?
 
@@ -185,6 +186,50 @@ holding the asset, and lost money in 3 of 4 periods. That is the normal
 result for this kind of search, and it is the reason the live-trading gate
 in this repo stays shut. A strategy earns real money only after it survives
 this test *and* forward paper trading — not because it topped a leaderboard.
+
+### The basket, walked forward
+
+`--basket` applies the same discipline to the multi-asset momentum basket.
+Each fold searches a set of lookbacks across the whole basket on the train
+range, picks the one with the best total return, then scores *that single
+lookback* on the test range it never saw, against equal-weight buy & hold
+over the same range. Series are first trimmed to a common length (keeping
+the most recent candles) so a fold's indices mean the same dates in every
+sleeve, and each test window is warmed up on the train candles immediately
+before it so the momentum signal is already formed when scoring starts.
+
+```bash
+python -m crypto_trader.walkforward --basket --timeframe 1d --days 730 \
+  --train-candles 300 --test-candles 100
+```
+
+720 daily Kraken candles, 5 symbols, 4 folds — first with the lookback
+searched per fold, then with it pinned at 28 so no search happens at all:
+
+```
+                          searched    fixed(28)
+Mean in-sample (train):     29.75%      13.04%
+Mean out-of-sample (test):  -1.78%      -3.14%
+Mean buy & hold:            -9.96%      -9.96%
+Profitable out-of-sample:   1/4          1/4
+Beat buy & hold:            2/4          2/4
+```
+
+**The in-sample +60.52% did not survive.** Out-of-sample the basket lost
+money in both configurations, and searching the lookback bought nothing:
+it tripled the in-sample number (13% → 30%) and left the out-of-sample
+number where it was. The lookback it picked also refused to sit still
+across folds (21, 21, 7, 56), which is what fitting each window looks like.
+
+What *did* show up is worth stating precisely, because it is the only
+positive finding here: the basket beat buy & hold in 2 of 4 folds and lost
+far less than it over the period as a whole (-1.8% against -10.0%), with
+noticeably shallower drawdowns (5-15% against holding through a 42% fall
+in one fold). The test ranges happen to cover a falling market, and being
+flat rather than long during a fall is exactly what a trend filter is
+supposed to do. That is a real property, and it is *not* the same as an
+edge: losing less than a losing benchmark still loses money. Nothing here
+justifies putting capital behind it, and the live-trading gate stays shut.
 
 **Note on available history:** exchanges cap how many candles they'll return
 regardless of `--days`. Kraken returns about 720 per timeframe (so 4h covers

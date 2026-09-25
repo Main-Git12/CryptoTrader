@@ -1,14 +1,18 @@
 import argparse
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import partial
 
+from .basket import DEFAULT_SYMBOLS, equal_weight_buy_and_hold_pct, run_basket_backtest
 from .config import Config
 from .engine import BacktestResult, run_backtest
 from .exchange import fetch_ohlcv
 from .metrics import PerformanceMetrics, compute_metrics
 from .optimize import Candidate, CandidateResult, default_candidates, evaluate_candidates, rank_by_total_return
 from .portfolio import Portfolio
+from .risk import RiskLimits
+from .strategy import TimeSeriesMomentumStrategy
 
 
 @dataclass
@@ -168,6 +172,242 @@ def summarize(folds: Sequence[FoldResult]) -> WalkForwardSummary | None:
     )
 
 
+@dataclass
+class BasketFoldResult:
+    window: Window
+    chosen_lookback: int
+    train_return_pct: float  # in-sample, on the range the lookback was chosen from
+    test_metrics: PerformanceMetrics  # the same lookback on data it never saw
+    buy_and_hold_return_pct: float
+
+
+@dataclass
+class BasketWalkForwardSummary:
+    fold_count: int
+    mean_train_return_pct: float
+    mean_test_return_pct: float
+    mean_buy_and_hold_return_pct: float
+    folds_profitable_out_of_sample: int
+    folds_beating_buy_and_hold: int
+    chosen_lookbacks: list[int]
+
+
+def align_price_series(price_series: Mapping[str, Sequence[float]]) -> dict[str, list[float]]:
+    """Trims every symbol to the shortest series, keeping the most recent
+    candles.
+
+    Window indices have to mean the same date in every sleeve, or a fold
+    would train on one symbol's January against another's March. All fetches
+    end at roughly now, so aligning on the tail lines them up.
+    """
+    usable = {symbol: list(prices) for symbol, prices in price_series.items() if prices}
+    if not usable:
+        return {}
+
+    length = min(len(prices) for prices in usable.values())
+    return {symbol: prices[-length:] for symbol, prices in usable.items()}
+
+
+def _slice_series(price_series: Mapping[str, Sequence[float]], start: int, end: int) -> dict[str, list[float]]:
+    return {symbol: list(prices[start:end]) for symbol, prices in price_series.items()}
+
+
+def evaluate_basket_on_test_window(
+    price_series: Mapping[str, Sequence[float]],
+    window: Window,
+    lookback: int,
+    starting_balance_usd: float,
+    limits: RiskLimits | None = None,
+) -> PerformanceMetrics | None:
+    """Scores one lookback over a window's test range only.
+
+    Like the single-asset version, the strategies first see `lookback`
+    candles of the preceding train data so their momentum signal is already
+    formed when the test range opens — otherwise every fold would start
+    blind. Those warm-up candles are then cut from the scored equity curve,
+    so the metrics describe the test range and nothing else.
+    """
+    warmup = min(lookback, window.test_start)
+    windowed = _slice_series(price_series, window.test_start - warmup, window.test_end)
+
+    basket = run_basket_backtest(
+        windowed,
+        partial(TimeSeriesMomentumStrategy, lookback=lookback),
+        starting_balance_usd=starting_balance_usd,
+        min_history=warmup + 1,
+        limits=limits,
+    )
+    if basket.metrics is None or len(basket.equity_curve) <= warmup:
+        return None
+
+    scored = BacktestResult(
+        portfolio=Portfolio(cash_usd=0.0),  # the sleeves hold the real fills
+        equity_curve=basket.equity_curve[warmup:],
+        trade_count=basket.metrics.trade_count,
+    )
+    return compute_metrics(scored, starting_balance_usd)
+
+
+def run_basket_walk_forward(
+    price_series: Mapping[str, Sequence[float]],
+    lookbacks: Sequence[int],
+    starting_balance_usd: float,
+    train_size: int,
+    test_size: int,
+    step: int | None = None,
+    limits: RiskLimits | None = None,
+) -> list[BasketFoldResult]:
+    """Walk-forward for the multi-asset momentum basket.
+
+    Same discipline as the single-asset version, with the lookback as the
+    thing being selected: each fold picks the lookback that did best across
+    the whole basket over the train range, then scores that one lookback
+    over the test range it never saw, against equal-weight buy & hold on the
+    same range.
+
+    This is the test that matters for the basket. Its in-sample result used
+    a lookback taken from published evidence rather than fitted here, which
+    is a better starting position than a parameter search — but "better
+    starting position" is not evidence, and only out-of-sample scoring can
+    tell the difference.
+    """
+    aligned = align_price_series(price_series)
+    if not aligned or not lookbacks:
+        return []
+
+    length = min(len(prices) for prices in aligned.values())
+    folds = []
+    for window in make_windows(length, train_size, test_size, step):
+        train_slices = _slice_series(aligned, window.train_start, window.train_end)
+
+        scored_lookbacks = []
+        for lookback in lookbacks:
+            trained = run_basket_backtest(
+                train_slices,
+                partial(TimeSeriesMomentumStrategy, lookback=lookback),
+                starting_balance_usd=starting_balance_usd,
+                min_history=lookback + 1,
+                limits=limits,
+            )
+            if trained.metrics is not None:
+                scored_lookbacks.append((lookback, trained.metrics.total_return_pct))
+
+        if not scored_lookbacks:
+            continue
+
+        chosen_lookback, train_return_pct = max(scored_lookbacks, key=lambda pair: pair[1])
+        test_metrics = evaluate_basket_on_test_window(
+            aligned, window, chosen_lookback, starting_balance_usd, limits
+        )
+        if test_metrics is None:
+            continue
+
+        test_slices = _slice_series(aligned, window.test_start, window.test_end)
+        folds.append(
+            BasketFoldResult(
+                window=window,
+                chosen_lookback=chosen_lookback,
+                train_return_pct=train_return_pct,
+                test_metrics=test_metrics,
+                buy_and_hold_return_pct=equal_weight_buy_and_hold_pct(test_slices, starting_balance_usd) or 0.0,
+            )
+        )
+    return folds
+
+
+def summarize_basket(folds: Sequence[BasketFoldResult]) -> BasketWalkForwardSummary | None:
+    if not folds:
+        return None
+
+    return BasketWalkForwardSummary(
+        fold_count=len(folds),
+        mean_train_return_pct=sum(f.train_return_pct for f in folds) / len(folds),
+        mean_test_return_pct=sum(f.test_metrics.total_return_pct for f in folds) / len(folds),
+        mean_buy_and_hold_return_pct=sum(f.buy_and_hold_return_pct for f in folds) / len(folds),
+        folds_profitable_out_of_sample=sum(1 for f in folds if f.test_metrics.total_return_pct > 0),
+        folds_beating_buy_and_hold=sum(
+            1 for f in folds if f.test_metrics.total_return_pct > f.buy_and_hold_return_pct
+        ),
+        chosen_lookbacks=[f.chosen_lookback for f in folds],
+    )
+
+
+def _run_basket_cli(args: argparse.Namespace) -> None:
+    since_ms = int((time.time() - args.days * 86400) * 1000)
+    price_series: dict[str, list[float]] = {}
+    for symbol in args.symbols:
+        config = Config(
+            exchange_id=args.exchange,
+            symbol=symbol,
+            timeframe=args.timeframe,
+            starting_balance_usd=args.starting_balance_usd,
+            live_trading=False,
+            api_key=None,
+            api_secret=None,
+        )
+        try:
+            candles = fetch_ohlcv(config, since_ms=since_ms)
+        except Exception as error:  # noqa: BLE001 — one dead symbol shouldn't sink the run
+            print(f"{symbol}: skipped ({type(error).__name__}: {error})")
+            continue
+        price_series[symbol] = [candle[4] for candle in candles]
+
+    aligned = align_price_series(price_series)
+    if not aligned:
+        print("No symbols returned usable data — nothing to validate.")
+        return
+
+    periods_per_year = {"1d": 365.0, "4h": 365.0 * 6, "1h": 365.0 * 24}.get(args.timeframe, 365.0)
+    limits = RiskLimits(
+        target_volatility_pct=args.target_volatility_pct,
+        periods_per_year=periods_per_year,
+    )
+
+    length = min(len(prices) for prices in aligned.values())
+    folds = run_basket_walk_forward(
+        aligned,
+        lookbacks=args.lookbacks,
+        starting_balance_usd=args.starting_balance_usd,
+        train_size=args.train_candles,
+        test_size=args.test_candles,
+        step=args.step_candles,
+        limits=limits,
+    )
+
+    print(f"Basket walk-forward on {args.exchange}, {args.timeframe} candles, {length} aligned per symbol")
+    print(f"Symbols: {', '.join(sorted(aligned))}")
+    summary = summarize_basket(folds)
+    if summary is None:
+        needed = args.train_candles + args.test_candles
+        print(
+            f"Not enough aligned history for a single fold: need {needed} candles "
+            f"({args.train_candles} train + {args.test_candles} test), have {length}."
+        )
+        return
+
+    print(f"Lookbacks searched per fold: {args.lookbacks}\n")
+    print(f"{'fold':<6} {'chosen':>8} {'train%':>9} {'test%':>9} {'buy&hold%':>11} {'drawdown%':>11}")
+    for index, fold in enumerate(folds, start=1):
+        print(
+            f"{index:<6} {fold.chosen_lookback:>8} {fold.train_return_pct:>8.2f}% "
+            f"{fold.test_metrics.total_return_pct:>8.2f}% {fold.buy_and_hold_return_pct:>10.2f}% "
+            f"{fold.test_metrics.max_drawdown_pct:>10.2f}%"
+        )
+
+    print(
+        f"\nMean in-sample (train):    {summary.mean_train_return_pct:>8.2f}%"
+        f"\nMean out-of-sample (test): {summary.mean_test_return_pct:>8.2f}%"
+        f"\nMean buy & hold:           {summary.mean_buy_and_hold_return_pct:>8.2f}%"
+        f"\nProfitable out-of-sample:  {summary.folds_profitable_out_of_sample}/{summary.fold_count} folds"
+        f"\nBeat buy & hold:           {summary.folds_beating_buy_and_hold}/{summary.fold_count} folds"
+    )
+    if len(set(summary.chosen_lookbacks)) > 1:
+        print(
+            f"\nThe chosen lookback moved between folds ({summary.chosen_lookbacks}), which is "
+            "itself a warning: a parameter that won't sit still is being fitted to each window."
+        )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -189,7 +429,25 @@ def main() -> None:
         help="How far each window rolls forward. Defaults to --test-candles (non-overlapping test ranges).",
     )
     parser.add_argument("--starting-balance-usd", type=float, default=10000.0)
+    parser.add_argument(
+        "--basket",
+        action="store_true",
+        help="Walk-forward the multi-asset momentum basket instead of the single-symbol indicator grid.",
+    )
+    parser.add_argument("--symbols", nargs="+", default=list(DEFAULT_SYMBOLS), help="Symbols for --basket.")
+    parser.add_argument(
+        "--lookbacks",
+        nargs="+",
+        type=int,
+        default=[7, 14, 21, 28, 42, 56],
+        help="Momentum lookbacks each fold chooses between, in candles.",
+    )
+    parser.add_argument("--target-volatility-pct", type=float, default=0.40)
     args = parser.parse_args()
+
+    if args.basket:
+        _run_basket_cli(args)
+        return
 
     config = Config(
         exchange_id=args.exchange,

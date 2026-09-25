@@ -44,7 +44,9 @@ def _aggregate_equity(sleeves: Sequence[Sleeve]) -> list[float]:
     return [sum(curve[i] for curve in curves) for i in range(length)]
 
 
-def _buy_and_hold_return_pct(price_series: Mapping[str, Sequence[float]], starting_balance_usd: float) -> float | None:
+def equal_weight_buy_and_hold_pct(
+    price_series: Mapping[str, Sequence[float]], starting_balance_usd: float
+) -> float | None:
     """Equal-weight buy and hold across the same symbols, each paying one
     entry fee — the benchmark the basket has to beat to justify trading."""
     usable = {symbol: prices for symbol, prices in price_series.items() if len(prices) >= 2}
@@ -98,7 +100,7 @@ def run_basket_backtest(
         sleeves=sleeves,
         equity_curve=equity_curve,
         metrics=compute_metrics(basket, starting_balance_usd),
-        buy_and_hold_return_pct=_buy_and_hold_return_pct(usable, starting_balance_usd),
+        buy_and_hold_return_pct=equal_weight_buy_and_hold_pct(usable, starting_balance_usd),
     )
 
 
