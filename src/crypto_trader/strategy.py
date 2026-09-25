@@ -1,3 +1,4 @@
+import random
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -134,3 +135,45 @@ class RsiReversionStrategy(Strategy):
         if rsi > self.overbought:
             return Signal.SELL
         return Signal.HOLD
+
+
+class RandomSignalStrategy(Strategy):
+    """A strategy that ignores price entirely and moves in and out of the
+    market at random, at a chosen rhythm.
+
+    This exists to be a null hypothesis, not to be traded. Given the rate at
+    which a real strategy enters (`p_enter`, the chance of going long after a
+    flat candle) and exits (`p_exit`, the chance of going flat after a long
+    one), it produces a position series with the *same* expected time in
+    market and the *same* average holding period — and therefore the same
+    exposure and roughly the same fee bill — while having no relationship to
+    price whatsoever.
+
+    That is what makes it a fair control. Comparing a strategy against "always
+    in the market" conflates two claims: that its timing is informative, and
+    that being out of the market sometimes helped. Comparing it against this
+    isolates the first. If a coin flip with the same rhythm does just as well,
+    the signal contributed nothing and the result came from exposure alone.
+    """
+
+    def __init__(self, p_enter: float, p_exit: float, seed: int | None = None):
+        if not 0.0 <= p_enter <= 1.0:
+            raise ValueError(f"p_enter must be a probability, got {p_enter}")
+        if not 0.0 <= p_exit <= 1.0:
+            raise ValueError(f"p_exit must be a probability, got {p_exit}")
+        self.p_enter = p_enter
+        self.p_exit = p_exit
+        self.seed = seed
+        self._random = random.Random(seed)
+        self._long = False
+
+    def reset(self) -> None:
+        """Rewinds to the same coin flips, not new ones — a seeded trial has
+        to replay identically or the significance test isn't reproducible."""
+        self._random = random.Random(self.seed)
+        self._long = False
+
+    def next_signal(self, close_prices: list[float]) -> Signal:
+        roll = self._random.random()
+        self._long = roll >= self.p_exit if self._long else roll < self.p_enter
+        return Signal.BUY if self._long else Signal.SELL
