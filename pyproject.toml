@@ -4,10 +4,52 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crypto-trader"
-version = "0.1.0"
-description = "Backtest/paper-trading crypto bot (live trading intentionally not wired up yet)"
+version = "0.2.0"
+description = "Backtest crypto strategies and find out whether the result means anything: walk-forward, deflated Sharpe, coin-flip controls, block bootstrap."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = ["ccxt>=4.3,<5"]
+keywords = [
+    "backtesting",
+    "trading",
+    "crypto",
+    "quantitative-finance",
+    "walk-forward",
+    "overfitting",
+    "deflated-sharpe",
+    "bootstrap",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/Main-Git12/CryptoTrader"
+Repository = "https://github.com/Main-Git12/CryptoTrader"
+Issues = "https://github.com/Main-Git12/CryptoTrader/issues"
+
+# Each analysis is its own command so the validation tools can be used on their
+# own, without anyone adopting this repo's strategies — they are the part worth
+# reusing, and they work against any equity curve.
+[project.scripts]
+crypto-trader-backtest = "crypto_trader.backtest:main"
+crypto-trader-paper = "crypto_trader.paper_trade:main"
+crypto-trader-optimize = "crypto_trader.optimize:main"
+crypto-trader-basket = "crypto_trader.basket:main"
+crypto-trader-walkforward = "crypto_trader.walkforward:main"
+crypto-trader-significance = "crypto_trader.significance:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

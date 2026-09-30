@@ -1,9 +1,39 @@
 # crypto-trader
 
-A crypto trading bot that starts in **backtest/paper mode** — it trades against
-historical or simulated prices with a simulated wallet, never a real exchange
-account. Live trading is a separate, explicit opt-in (see below), not the
-default.
+**A backtesting engine that tries to talk you out of your own backtest.**
+
+Anyone can produce a strategy that made money on past data — that is the easy
+part, and it is worth nothing. The hard part is telling a real edge from a
+lucky fit, and almost no retail tooling even attempts it. This repo ships four
+independent instruments that do:
+
+| Instrument | The question it answers |
+|---|---|
+| `walkforward` | Does the config still work on data it was not chosen from? |
+| `deflated` | Is the winner good *given how many configs were tried*? |
+| `significance` (controls) | Did the **timing** do anything, or just being in cash? |
+| `significance` (bootstrap) | Is the margin bigger than the noise? |
+
+They work on any equity curve, not just this repo's strategies.
+
+**The proof that they bite: all four of them failed our own strategies.** Each
+section below quotes the real number, including a momentum basket that returned
++60.52% in-sample and then fell apart out-of-sample, and an optimizer winner
+whose Sharpe was *below* what zero-skill luck produces. Nothing here is
+advertised as profitable, because nothing here survived its own tests. That is
+the honest result of doing this properly, and the reason the live-trading gate
+stays shut.
+
+```bash
+pip install -e .
+
+crypto-trader-walkforward --basket --timeframe 1d --days 730
+crypto-trader-significance --timeframe 1d --days 730 --trials 500
+```
+
+Trading runs in **backtest/paper mode** against a simulated wallet, never a
+real exchange account. Live trading is a separate, explicit opt-in (see below),
+not the default.
 
 ## Why paper mode is the default
 
@@ -37,8 +67,8 @@ tests/            pytest unit tests for portfolio math, strategy signals, config
 ## Getting started
 
 ```bash
-pip install -e .
-pip install -r requirements-dev.txt
+pip install -e .            # installs the six crypto-trader-* commands
+pip install -e '.[dev]'     # ...plus pytest, ruff and mypy
 
 ruff check src tests   # lint
 mypy                    # type check
