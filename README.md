@@ -1,9 +1,39 @@
 # crypto-trader
 
-A crypto trading bot that starts in **backtest/paper mode** — it trades against
-historical or simulated prices with a simulated wallet, never a real exchange
-account. Live trading is a separate, explicit opt-in (see below), not the
-default.
+**A backtesting engine that tries to talk you out of your own backtest.**
+
+Anyone can produce a strategy that made money on past data — that is the easy
+part, and it is worth nothing. The hard part is telling a real edge from a
+lucky fit, and almost no retail tooling even attempts it. This repo ships four
+independent instruments that do:
+
+| Instrument | The question it answers |
+|---|---|
+| `walkforward` | Does the config still work on data it was not chosen from? |
+| `deflated` | Is the winner good *given how many configs were tried*? |
+| `significance` (controls) | Did the **timing** do anything, or just being in cash? |
+| `significance` (bootstrap) | Is the margin bigger than the noise? |
+
+They work on any equity curve, not just this repo's strategies.
+
+**The proof that they bite: all four of them failed our own strategies.** Each
+section below quotes the real number, including a momentum basket that returned
++60.52% in-sample and then fell apart out-of-sample, and an optimizer winner
+whose Sharpe was *below* what zero-skill luck produces. Nothing here is
+advertised as profitable, because nothing here survived its own tests. That is
+the honest result of doing this properly, and the reason the live-trading gate
+stays shut.
+
+```bash
+pip install -e .
+
+crypto-trader-walkforward --basket --timeframe 1d --days 730
+crypto-trader-significance --timeframe 1d --days 730 --trials 500
+```
+
+Trading runs in **backtest/paper mode** against a simulated wallet, never a
+real exchange account. Live trading is a separate, explicit opt-in (see below),
+not the default.
 
 ## Why paper mode is the default
 
@@ -27,6 +57,7 @@ src/crypto_trader/
   optimize.py     CLI: grid-search strategy parameters against real historical data, ranked by performance
   leaderboard.py  Accumulate optimizer results across runs so each run can refine around the best found so far
   deflated.py     Deflated Sharpe ratio — what a search result is worth after correcting for how many configs were tried
+  significance.py CLI: does the signal beat coin flips of the same rhythm, and does its margin survive block resampling?
   basket.py       CLI: multi-asset time-series-momentum basket on daily candles, volatility-targeted
   walkforward.py  CLI: pick the best config on one slice of history, score it on the next slice it never saw
                   (--basket does the same for the multi-asset momentum basket)
@@ -36,8 +67,8 @@ tests/            pytest unit tests for portfolio math, strategy signals, config
 ## Getting started
 
 ```bash
-pip install -e .
-pip install -r requirements-dev.txt
+pip install -e .            # installs the six crypto-trader-* commands
+pip install -e '.[dev]'     # ...plus pytest, ruff and mypy
 
 ruff check src tests   # lint
 mypy                    # type check
@@ -50,6 +81,8 @@ python -m crypto_trader.paper_trade --exchange kraken --symbol BTC/USD --timefra
 python -m crypto_trader.optimize --exchange kraken --symbol BTC/USD --timeframe 1h --days 90
 
 python -m crypto_trader.walkforward --symbol BTC/USD --timeframe 1h --train-candles 300 --test-candles 100
+
+python -m crypto_trader.significance --timeframe 1d --days 730 --trials 500
 ```
 
 `pip install -e .` installs this `src`-layout package (and its `ccxt` dependency, per
@@ -246,6 +279,78 @@ which includes most CI runners and PaaS hosts (e.g. Railway) — kraken,
 coinbase, and bitstamp all work fine from those. If you're running this
 somewhere Binance isn't blocked, `--exchange binance --symbol BTC/USDT`
 works the same way.
+
+## Is any of it distinguishable from luck?
+
+`significance.py` runs two tests that apply even when nothing was searched.
+Both exist because of a specific weakness in the basket result above: it
+rests on four folds, and "beat buy & hold in 2 of 4" is not a claim four
+folds can carry on their own.
+
+```bash
+python -m crypto_trader.significance --timeframe 1d --days 730 --trials 500
+```
+
+### 1. Did the timing do anything, or was it just being in cash?
+
+A strategy that is long half the time looks different from buy & hold
+whether or not its timing means anything. So the control isn't buy & hold —
+it's `RandomSignalStrategy`, a coin flip that **ignores price entirely** and
+is given the real strategy's own entry and exit rates. That matches its
+exposure *and* its average holding period, so fees and time-in-market line
+up, and the only thing destroyed is the relationship to price.
+
+Why the rhythm has to match: comparing against "always in the market"
+conflates two claims — that the timing is informative, and that being out
+sometimes helped. This separates them.
+
+The test is sharp enough to fail a result that looks excellent. On a
+straight-line rising series, momentum returns **+171%** and does *not*
+survive: it never exits, so its controls never exit either, which makes them
+"buy on a random early candle and hold" — and they score about the same. The
+return is real; the timing contributed almost nothing to it.
+
+### 2. Is the margin bigger than the noise?
+
+A moving-block bootstrap resamples the paired difference in contiguous
+blocks, preserving the autocorrelation and volatility clustering that make a
+plain t-test overconfident on financial returns.
+
+It measures **log growth**, not the arithmetic difference, and that choice
+matters here: a strategy sitting in cash half the time has far less
+compounding drag, so it can finish well ahead while earning *less* on the
+average candle. Our own basket does exactly that — its mean per-candle edge
+is negative and it still ends ahead. An arithmetic test would call that a
+failure. It's just a different way of winning.
+
+### What it says about our basket
+
+720 daily Kraken candles, 5 symbols, 28-day lookback:
+
+```
+--- Random-signal test: is the timing worth anything? ---
+Control rhythm: long 47% of candles, entry 8.5%/candle, exit 9.3%/candle
+Momentum basket:                 62.41%
+500 random controls, mean        18.13%
+500 random controls, median      12.14%
+Beat 467/500 of them (p = 0.068)
+
+--- Block bootstrap: is the margin over buy & hold bigger than the noise? ---
+Momentum basket:                 62.41%
+Equal-weight buy & hold:         45.35%
+Compounded edge over the period: +11.63%
+Edge vanished in 1988/5000 resamples (p = 0.398)
+```
+
+Read both honestly. The basket beat 93% of controls that share its exact
+trading rhythm — genuinely suggestive, and the best sign this repo has
+produced — but p = 0.068 does not clear the 5% bar, so it stays a reason to
+gather more data rather than a reason to believe. And its margin over buy &
+hold is well inside what block resampling produces by chance.
+
+Verdicts are reported in three bands rather than two, because a p-value of
+0.068 and one of 0.398 are not the same finding, and calling both "not
+significant" discards the difference.
 
 ## Risk limits
 
