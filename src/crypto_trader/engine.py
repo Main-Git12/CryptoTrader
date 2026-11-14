@@ -187,8 +187,10 @@ def run_paper_trading(
                 on_error(error)
             candles = []
 
-        for candle in candles:
+        for candle in sorted(candles, key=lambda row: row[0]):
             timestamp, _open, _high, _low, close, _volume = candle
+            if since_ms is not None and timestamp < since_ms:
+                continue
             since_ms = int(timestamp) + 1
             close_prices.append(close)
             result.since_ms = since_ms

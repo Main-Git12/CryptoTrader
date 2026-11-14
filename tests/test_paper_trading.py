@@ -139,6 +139,28 @@ def test_paper_trading_never_reprocesses_a_candle(uptrend_then_downtrend):
     assert result.trade_count == 2
 
 
+def test_resume_ignores_repeated_and_out_of_order_candles():
+    candles = _candles_from_closes([100.0, 110.0, 125.0, 130.0])
+    stale, first, second, third = candles
+    delivered = iter([[second, stale, first, first], [first, third, second]])
+    cursors = []
+
+    def fetch(config, *, since_ms):
+        cursors.append(since_ms)
+        return next(delivered)
+
+    result = run_paper_trading(
+        _config(), SmaCrossoverStrategy(fast_window=1, slow_window=2), Portfolio(cash_usd=10000.0),
+        iterations=2, fetch=fetch, sleep=lambda _: None,
+        resume_close_prices=[100.0], resume_since_ms=1,
+    )
+
+    assert cursors == [1, 2 * ONE_HOUR_MS + 1]
+    assert result.close_prices == [100.0, 110.0, 125.0, 130.0]
+    assert result.since_ms == 3 * ONE_HOUR_MS + 1
+    assert result.last_price == 130.0
+
+
 def test_paper_trading_reports_fills_via_on_fill_callback(uptrend_then_downtrend):
     feed = FakeFeed(_candles_from_closes(uptrend_then_downtrend))
     clock = FakeClock()
@@ -232,10 +254,11 @@ def test_paper_trading_resume_skips_the_initial_lookback_fetch():
 
 def test_paper_trading_resume_continues_as_if_it_never_stopped(uptrend_then_downtrend):
     split = 30
-    first_half, second_half = uptrend_then_downtrend[:split], uptrend_then_downtrend[split:]
+    candles = _candles_from_closes(uptrend_then_downtrend)
+    first_half, second_half = candles[:split], candles[split:]
 
     continuous_portfolio = Portfolio(cash_usd=10000.0)
-    continuous_feed = FakeFeed(_candles_from_closes(uptrend_then_downtrend))
+    continuous_feed = FakeFeed(candles)
     continuous_result = run_paper_trading(
         _config(),
         SmaCrossoverStrategy(fast_window=5, slow_window=15),
@@ -256,7 +279,7 @@ def test_paper_trading_resume_continues_as_if_it_never_stopped(uptrend_then_down
         resumed_portfolio,
         iterations=len(first_half),
         lookback_candles=1,
-        fetch=FakeFeed(_candles_from_closes(first_half)).fetch,
+        fetch=FakeFeed(first_half).fetch,
         sleep=FakeClock().sleep,
     )
     second_run = run_paper_trading(
@@ -265,7 +288,7 @@ def test_paper_trading_resume_continues_as_if_it_never_stopped(uptrend_then_down
         resumed_portfolio,
         iterations=len(second_half),
         lookback_candles=1,
-        fetch=FakeFeed(_candles_from_closes(second_half)).fetch,
+        fetch=FakeFeed(second_half).fetch,
         sleep=FakeClock().sleep,
         resume_close_prices=first_run.close_prices,
         resume_since_ms=first_run.since_ms,
