@@ -59,6 +59,11 @@ class BacktestResult:
     portfolio: Portfolio
     equity_curve: list[float] = field(default_factory=list)
     trade_count: int = 0
+    # Whether a position was open after each candle, aligned 1:1 with
+    # `equity_curve`. What the strategy *did*, separate from what it earned —
+    # significance.py needs it to measure a strategy's exposure and trading
+    # rhythm without re-deriving them from the equity curve.
+    positions: list[bool] = field(default_factory=list)
 
 
 def run_backtest(
@@ -78,6 +83,7 @@ def run_backtest(
     """
     strategy.reset()
     equity_curve: list[float] = []
+    positions: list[bool] = []
     trade_count = 0
 
     for i in range(len(close_prices)):
@@ -86,6 +92,7 @@ def run_backtest(
             if risk is not None:
                 risk.observe(equity)
             equity_curve.append(equity)
+            positions.append(portfolio.position_qty > 0)
             continue
 
         price = close_prices[i]
@@ -99,8 +106,11 @@ def run_backtest(
             trade_count += 1
 
         equity_curve.append(portfolio.equity(price))
+        positions.append(portfolio.position_qty > 0)
 
-    return BacktestResult(portfolio=portfolio, equity_curve=equity_curve, trade_count=trade_count)
+    return BacktestResult(
+        portfolio=portfolio, equity_curve=equity_curve, trade_count=trade_count, positions=positions
+    )
 
 
 @dataclass
